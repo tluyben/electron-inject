@@ -1,3 +1,15 @@
+function promptInExistingChat(prompt) {
+    const cselector = findElementsByTextInfo("Reply to Claude").find(x=>x.tagName=='P')?.selector
+    if (!cselector) {
+        console.log("No existing chat found");
+        return;
+    }
+    const cinput = document.querySelector(cselector)
+    cinput.textContent = prompt
+
+    hitEnter(cinput);
+}
+
 function combineResponseChunks(result) {
     let responseText = "";
 
