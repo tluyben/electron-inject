@@ -35,10 +35,145 @@ app.use(express.json());
 // Store the active CDP client globally so we can reuse it
 let activeClient = null;
 
+// The DOM inspection helper functions as a string
+const domInspectionTools = `
+// DOM Inspector Helper Functions
+function findElementsByText(searchText, caseSensitive = false, rootElement = document.body) {
+  const results = [];
+  const searchTextLower = caseSensitive ? searchText : searchText.toLowerCase();
+  
+  function searchNode(node) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const content = caseSensitive ? node.textContent : node.textContent.toLowerCase();
+      if (content.includes(searchTextLower)) {
+        if (node.parentElement && !results.includes(node.parentElement)) {
+          results.push(node.parentElement);
+        }
+      }
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      for (const attr of node.attributes) {
+        const attrValue = caseSensitive ? attr.value : attr.value.toLowerCase();
+        if (attrValue.includes(searchTextLower)) {
+          if (!results.includes(node)) {
+            results.push(node);
+            return;
+          }
+        }
+      }
+      
+      for (const child of node.childNodes) {
+        searchNode(child);
+      }
+    }
+  }
+  
+  searchNode(rootElement);
+  return results;
+}
+
+function highlightElements(elements, duration = 2000, color = 'rgba(255, 0, 0, 0.3)') {
+  const originalStyles = [];
+  
+  elements.forEach(el => {
+    originalStyles.push({
+      element: el,
+      outline: el.style.outline,
+      backgroundColor: el.style.backgroundColor,
+      transition: el.style.transition
+    });
+    
+    el.style.outline = \`2px solid \${color}\`;
+    el.style.backgroundColor = color;
+    el.style.transition = 'all 0.5s ease-in-out';
+  });
+  
+  setTimeout(() => {
+    originalStyles.forEach(item => {
+      item.element.style.outline = item.outline;
+      item.element.style.backgroundColor = item.backgroundColor;
+      item.element.style.transition = item.transition;
+    });
+  }, duration);
+}
+
+function getUniqueSelector(element) {
+  if (!element) return null;
+  if (element.id) return \`#\${element.id}\`;
+  
+  let selector = element.tagName.toLowerCase();
+  
+  if (element.className) {
+    const classes = element.className.split(/\\s+/)
+      .filter(c => c && c.length > 0)
+      .map(c => \`.\${c}\`)
+      .join('');
+    selector += classes;
+  }
+  
+  if (!element.parentElement || element.parentElement === document) {
+    return selector;
+  }
+  
+  const siblings = Array.from(element.parentElement.children);
+  if (siblings.length > 1) {
+    const index = siblings.indexOf(element) + 1;
+    selector += \`:nth-child(\${index})\`;
+  }
+  
+  return \`\${getUniqueSelector(element.parentElement)} > \${selector}\`;
+}
+
+function findElementsByStyle(styleProperties) {
+  const allElements = document.querySelectorAll('*');
+  const results = [];
+  
+  allElements.forEach(el => {
+    const computedStyle = window.getComputedStyle(el);
+    let match = true;
+    
+    for (const [property, value] of Object.entries(styleProperties)) {
+      if (computedStyle[property] !== value) {
+        match = false;
+        break;
+      }
+    }
+    
+    if (match) {
+      results.push(el);
+    }
+  });
+  
+  return results;
+}
+
+function findClickableElements() {
+  const standardClickable = document.querySelectorAll('a, button, input[type="button"], input[type="submit"], [role="button"]');
+  const attrClickable = document.querySelectorAll('[onclick], [data-click], [data-action]');
+  const styleClickable = Array.from(document.querySelectorAll('*')).filter(el => {
+    const style = window.getComputedStyle(el);
+    return style.cursor === 'pointer';
+  });
+  
+  return [...new Set([...standardClickable, ...attrClickable, ...styleClickable])];
+}
+
+function inspectElements(elements) {
+  elements.forEach((el, index) => {
+    console.group(\`Element \${index + 1} (\${el.tagName})\`);
+    console.log('Element:', el);
+    console.log('Text content:', el.textContent.trim().substring(0, 100) + (el.textContent.length > 100 ? '...' : ''));
+    console.log('Unique selector:', getUniqueSelector(el));
+    console.log('Attributes:', Array.from(el.attributes).map(attr => \`\${attr.name}="\${attr.value}"\`).join(', '));
+    console.groupEnd();
+  });
+}
+
+console.log('[DOM Inspector Tools] Initialized successfully');
+`;
+
 // Connect to the CDP instance
 async function connectToCDP() {
   if (activeClient) {
-    // console.log('Using existing CDP connection');
     return activeClient;
   }
 
@@ -49,6 +184,13 @@ async function connectToCDP() {
     await Runtime.enable();
     
     console.log('Successfully connected to the Electron app');
+    
+    // Inject the DOM inspection tools
+    await Runtime.evaluate({
+      expression: domInspectionTools,
+      returnByValue: true
+    });
+    
     activeClient = { client, Runtime };
     
     // Set up event handling to log messages from the app
