@@ -322,7 +322,335 @@ function inspectElements(elements) {
   });
 }
 
-console.log('[DOM Inspector Tools] Initialized successfully with improved selector generation');
+function hitEnter(el) {
+  el.dispatchEvent(new KeyboardEvent('keydown',{key: 'Enter',code: 'Enter',keyCode: 13,which: 13,bubbles: true,cancelable: true}));
+}
+
+function parseStreamingJSON(text) {
+  // Handle multiple JSON objects separated by newlines (common in streaming APIs)
+  if (text.includes('\\n')) {
+    return text.split('\\n')
+      .filter(line => line.trim())
+      .map(line => {
+        try {
+          return JSON.parse(line);
+        } catch (e) {
+          return line;
+        }
+      });
+  }
+  
+  // Try to parse a single JSON object
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    // For streaming that sends "data: {json}" format (SSE)
+    if (text.startsWith('data:')) {
+      try {
+        const jsonPart = text.substring(5).trim();
+        return JSON.parse(jsonPart);
+      } catch (e2) {
+        return text;
+      }
+    }
+    return text;
+  }
+}
+
+function monitorApiCall(urlPattern, method, waitForCall = true, callback = null, timeout = 30000) {
+  return new Promise((resolve, reject) => {
+    // Create a regex from the pattern
+    const urlRegex = new RegExp(urlPattern);
+    // Track if we found a matching request
+    let foundRequest = false;
+    // For tracking timeout
+    let timeoutId = null;
+    
+    // Collection of all messages in order
+    const messageLog = [];
+    
+    // Function to add messages to the log
+    function logMessage(message) {
+      // Add timestamp if not present
+      if (!message.timestamp) {
+        message.timestamp = Date.now();
+      }
+      
+      // Add to log
+      messageLog.push(message);
+      
+      // Forward to callback if provided
+      if (callback) {
+        callback(message);
+      }
+    }
+    
+    // Set timeout if specified
+    if (timeout > 0) {
+      timeoutId = setTimeout(() => {
+        cleanupMonitoring();
+        reject(new Error(\`Timeout after \${timeout}ms waiting for \${method} \${urlPattern}\`));
+      }, timeout);
+    }
+    
+    // Cleanup function to remove our interceptors
+    function cleanupMonitoring() {
+      window.fetch = originalFetch;
+      clearTimeout(timeoutId);
+    }
+    
+    // Store original fetch
+    const originalFetch = window.fetch;
+    
+    // Custom implementation to intercept fetch
+    window.fetch = async function(resource, options = {}) {
+      const url = resource instanceof Request ? resource.url : resource;
+      const fetchMethod = (options.method || (resource instanceof Request ? resource.method : 'GET')).toUpperCase();
+      
+      // Check if this request matches our criteria
+      const isMatch = urlRegex.test(url) && fetchMethod === method.toUpperCase();
+      
+      // Track the original call timing
+      const startTime = Date.now();
+      
+      if (isMatch) {
+        foundRequest = true;
+        
+        // Log that we found a matching request
+        logMessage({
+          type: 'request-start',
+          url,
+          method: fetchMethod,
+          timestamp: startTime
+        });
+        
+        // Track request body if available
+        let requestBody = null;
+        if (options.body) {
+          try {
+            requestBody = typeof options.body === 'string' 
+              ? JSON.parse(options.body) 
+              : options.body;
+            
+            logMessage({
+              type: 'request-body',
+              body: requestBody,
+              timestamp: Date.now()
+            });
+          } catch (e) {
+            requestBody = options.body;
+            
+            logMessage({
+              type: 'request-body',
+              body: options.body,
+              timestamp: Date.now()
+            });
+          }
+        }
+      }
+      
+      try {
+        // Call the original fetch
+        const response = await originalFetch.apply(this, arguments);
+        
+        if (isMatch) {
+          // Create a clone to read the body (because response body can only be read once)
+          const clonedResponse = response.clone();
+          
+          // Handle streaming or regular response
+          try {
+            // For streaming responses like completions API
+            const reader = clonedResponse.body.getReader();
+            let chunks = [];
+            
+            // Read the stream
+            const processStream = async () => {
+              try {
+                while (true) {
+                  const { done, value } = await reader.read();
+                  
+                  if (done) {
+                    // Stream is complete
+                    break;
+                  }
+                  
+                  // Convert the chunk to text
+                  const chunk = new TextDecoder().decode(value);
+                  chunks.push(chunk);
+                  
+                  // Try to parse JSON chunks (for streaming APIs)
+                  try {
+                    const jsonData = parseStreamingJSON(chunk);
+                    logMessage({
+                      type: 'response-chunk',
+                      chunk: jsonData,
+                      timestamp: Date.now()
+                    });
+                  } catch (e) {
+                    // Not a valid JSON, just send the raw chunk
+                    logMessage({
+                      type: 'response-chunk',
+                      chunk: chunk,
+                      timestamp: Date.now()
+                    });
+                  }
+                }
+                
+                // Concatenate all chunks
+                const fullBody = chunks.join('');
+                
+                // Try to parse the complete response
+                try {
+                  const jsonResponse = JSON.parse(fullBody);
+                  const completeMsg = {
+                    type: 'response-complete',
+                    status: response.status,
+                    headers: Object.fromEntries([...response.headers.entries()]),
+                    body: jsonResponse,
+                    duration: Date.now() - startTime,
+                    timestamp: Date.now()
+                  };
+                  
+                  logMessage(completeMsg);
+                  
+                  // Resolve the promise with the final data and message log
+                  cleanupMonitoring();
+                  resolve({
+                    success: true,
+                    status: response.status,
+                    headers: Object.fromEntries([...response.headers.entries()]),
+                    body: jsonResponse,
+                    duration: Date.now() - startTime,
+                    messageLog: messageLog
+                  });
+                } catch (e) {
+                  // Not JSON, return as text
+                  const completeMsg = {
+                    type: 'response-complete',
+                    status: response.status,
+                    headers: Object.fromEntries([...response.headers.entries()]),
+                    body: fullBody,
+                    duration: Date.now() - startTime,
+                    timestamp: Date.now()
+                  };
+                  
+                  logMessage(completeMsg);
+                  
+                  cleanupMonitoring();
+                  resolve({
+                    success: true,
+                    status: response.status,
+                    headers: Object.fromEntries([...response.headers.entries()]),
+                    body: fullBody,
+                    duration: Date.now() - startTime,
+                    messageLog: messageLog
+                  });
+                }
+              } catch (streamError) {
+                logMessage({
+                  type: 'error',
+                  error: streamError.message,
+                  timestamp: Date.now()
+                });
+                
+                cleanupMonitoring();
+                reject({
+                  error: streamError.message,
+                  messageLog: messageLog
+                });
+              }
+            };
+            
+            // Start processing the stream
+            processStream();
+          } catch (streamSetupError) {
+            // Fallback to regular response handling if streaming fails
+            handleRegularResponse(clonedResponse, startTime);
+          }
+        }
+        
+        // Return the original response so the application works normally
+        return response;
+      } catch (error) {
+        if (isMatch) {
+          logMessage({
+            type: 'error',
+            error: error.message,
+            timestamp: Date.now()
+          });
+          
+          cleanupMonitoring();
+          reject({
+            error: error.message,
+            messageLog: messageLog
+          });
+        }
+        throw error; // Re-throw to not interfere with app error handling
+      }
+    };
+    
+    // Helper function to handle regular (non-streaming) responses
+    async function handleRegularResponse(response, startTime) {
+      try {
+        let responseData;
+        const contentType = response.headers.get('content-type') || '';
+        
+        if (contentType.includes('application/json')) {
+          responseData = await response.json();
+        } else {
+          responseData = await response.text();
+        }
+        
+        const completeMsg = {
+          type: 'response-complete',
+          status: response.status,
+          headers: Object.fromEntries([...response.headers.entries()]),
+          body: responseData,
+          duration: Date.now() - startTime,
+          timestamp: Date.now()
+        };
+        
+        logMessage(completeMsg);
+        
+        cleanupMonitoring();
+        resolve({
+          success: true,
+          status: response.status,
+          headers: Object.fromEntries([...response.headers.entries()]),
+          body: responseData,
+          duration: Date.now() - startTime,
+          messageLog: messageLog
+        });
+      } catch (error) {
+        logMessage({
+          type: 'error',
+          error: error.message,
+          timestamp: Date.now()
+        });
+        
+        cleanupMonitoring();
+        reject({
+          error: error.message,
+          messageLog: messageLog
+        });
+      }
+    }
+    
+    // If we're not waiting for a call and none are in progress, resolve immediately
+    if (!waitForCall && !foundRequest) {
+      cleanupMonitoring();
+      resolve({
+        success: false,
+        reason: 'No matching API calls in progress and waitForCall is false',
+        messageLog: messageLog
+      });
+    }
+    
+    // Log that we've started monitoring
+    console.log(\`Monitoring for \${method} \${urlPattern} API calls...\`);
+  });
+}
+console.log('[DOM Inspector Tools] Initialized successfully with improved selector generation and API monitoring');
 `;
 
 // Connect to the CDP instance

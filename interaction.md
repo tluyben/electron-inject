@@ -246,7 +246,7 @@ function processInBatches(elements, batchSize = 10) {
     const batch = elements.slice(index, index + batchSize);
     if (batch.length === 0) return;
     
-    console.log(`Processing batch ${index/batchSize + 1}`);
+    console.log(\`Processing batch \${index/batchSize + 1}\`);
     // Process each element in the batch
     batch.forEach(element => {
       // Do something with the element
@@ -266,6 +266,70 @@ function processInBatches(elements, batchSize = 10) {
 const allLinks = document.querySelectorAll('a');
 processInBatches(Array.from(allLinks));
 ```
+
+## API Monitoring
+
+Monitor and intercept API calls made by the application:
+
+```javascript
+// Monitor a specific API endpoint
+monitorApiCall(".*\\/completion$", "POST", true, event => {
+  // This callback is optional - you'll still get all messages in the final result
+  console.log(`Event: \${event.type}`, event);
+})
+.then(result => {
+  console.log('Complete API call result:', result);
+  console.log('All messages in order:', result.messageLog);
+})
+.catch(error => {
+  console.error('Error monitoring API call:', error);
+  console.log('Messages collected before error:', error.messageLog);
+});
+
+// Monitor with a timeout (5 seconds)
+monitorApiCall(".*\\/api\\/search$", "GET", true, null, 5000)
+.then(result => {
+  console.log('Search completed:', result);
+})
+.catch(error => {
+  console.error('Search failed or timed out:', error);
+});
+
+// Monitor without waiting for calls
+monitorApiCall(".*\\/api\\/status$", "GET", false)
+.then(result => {
+  if (!result.success) {
+    console.log('No matching calls were in progress');
+  } else {
+    console.log('Caught an in-progress call:', result);
+  }
+});
+```
+
+The `monitorApiCall` function provides:
+- URL pattern matching with regex
+- HTTP method filtering
+- Request/response body capture
+- Streaming response support
+- Detailed timing information
+- Optional event callbacks
+- Timeout support
+- Comprehensive message logging
+
+Each monitored call returns:
+- `success`: Whether the call completed successfully
+- `status`: HTTP status code
+- `headers`: Response headers
+- `body`: Parsed response body (JSON or text)
+- `duration`: Call duration in milliseconds
+- `messageLog`: Array of all events during the call
+
+Event types in messageLog:
+- `request-start`: Initial request details
+- `request-body`: Request body if present
+- `response-chunk`: Streaming response chunks
+- `response-complete`: Final response
+- `error`: Any errors that occurred
 
 ## Special REPL Commands
 
