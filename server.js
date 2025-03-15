@@ -54,7 +54,7 @@ async function connectToCDP() {
     // Set up event handling to log messages from the app
     Runtime.consoleAPICalled(({ type, args }) => {
       const values = args.map(arg => arg.value || arg.description).join(' ');
-      console.log(`\n[App ${type}]: `, values);
+      console.log(`[App ${type}]:`, values);
     });
     
     return activeClient;
@@ -81,16 +81,29 @@ async function executeJS(code) {
       };
     }
     
-    return {
-      result: result.result.value,
-      description: result.result.description || "No description available"
-    };
+    // Check if the result has a value that's not undefined
+    if (result.result.value !== undefined) {
+      return result.result.value;
+    } 
+    
+    // For objects that can't be serialized (showing as undefined)
+    if (result.result.type === 'object' && result.result.className) {
+      return `[${result.result.className}]`;
+    }
+    
+    // For functions
+    if (result.result.type === 'function') {
+      return `[Function]`;
+    }
+    
+    // For primitive types with no value
+    return result.result.type === 'undefined' ? undefined : `[${result.result.type}]`;
   } catch (err) {
     return { error: err.message };
   }
 }
 
-// API endpoint to execute JavaScript
+  // API endpoint to execute JavaScript
 app.post('/execute', async (req, res) => {
   const { code } = req.body;
   if (!code) {
@@ -99,7 +112,10 @@ app.post('/execute', async (req, res) => {
   
   try {
     const result = await executeJS(code);
-    res.json(result);
+    if (result && result.error) {
+      return res.status(400).json(result);
+    }
+    res.json({ result });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -120,7 +136,9 @@ app.listen(serverPort, () => {
       const scriptContent = fs.readFileSync(scriptPath, 'utf8');
       executeJS(scriptContent)
         .then(result => {
-          console.log('Script execution result:', result);
+          if (result !== undefined) {
+            console.log('Script execution result:', result);
+          }
           startREPL();
         })
         .catch(err => {
@@ -137,9 +155,12 @@ app.listen(serverPort, () => {
   }
 });
 
+// Make rl globally accessible for console events
+let rl;
+
 // Interactive REPL functionality
 function startREPL() {
-  const rl = readline.createInterface({
+  rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
     historySize: 100,
@@ -202,7 +223,9 @@ function startREPL() {
             const scriptContent = fs.readFileSync(filePath, 'utf8');
             console.log(`Executing file: ${filePath}`);
             const result = await executeJS(scriptContent);
-            console.log('Result:', result);
+            if (result !== undefined) {
+              console.log(result);
+            }
           } catch (err) {
             console.error(`Failed to load or execute file: ${err.message}`);
           }
@@ -211,7 +234,10 @@ function startREPL() {
           // Execute JavaScript in the Electron app
           try {
             const result = await executeJS(line);
-            console.log('Result:', result);
+            // Only display result if it's not undefined and not a console.log statement (which already outputs)
+            if (result !== undefined && !line.trim().startsWith('console.log')) {
+              console.log(result);
+            }
           } catch (err) {
             console.error('Execution error:', err);
           }
