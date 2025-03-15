@@ -1,0 +1,18 @@
+{
+  "restartable": "rs",
+  "ignore": [
+    ".git",
+    "node_modules/**/node_modules",
+    "*.test.js"
+  ],
+  "verbose": true,
+  "watch": [
+    "server.js"
+  ],
+  "env": {
+    "NODE_ENV": "development"
+  },
+  "stdin": false,
+  "quiet": true,
+  "signal": "SIGTERM"
+} 
