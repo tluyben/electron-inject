@@ -1,0 +1,24 @@
+{
+  "name": "electron-devtools-repl",
+  "version": "1.0.0",
+  "description": "A REPL interface for injecting JavaScript into Electron apps via the DevTools Protocol",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "electron",
+    "devtools",
+    "repl",
+    "cdp",
+    "injection"
+  ],
+  "author": "tluyben",
+  "license": "MIT",
+  "dependencies": {
+    "chrome-remote-interface": "^0.32.1",
+    "express": "^4.18.2",
+    "yargs": "^17.7.2"
+  }
+}
