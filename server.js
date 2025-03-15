@@ -54,7 +54,14 @@ async function connectToCDP() {
     // Set up event handling to log messages from the app
     Runtime.consoleAPICalled(({ type, args }) => {
       const values = args.map(arg => arg.value || arg.description).join(' ');
+      // Clear the current line
+      process.stdout.clearLine();
+      process.stdout.cursorTo(0);
       console.log(`[App ${type}]:`, values);
+      // If we have an active readline interface, re-display the prompt and current input
+      if (rl) {
+        rl.prompt(true);
+      }
     });
     
     return activeClient;
