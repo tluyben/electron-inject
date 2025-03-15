@@ -38,6 +38,16 @@ let activeClient = null;
 // The DOM inspection helper functions as a string
 const domInspectionTools = `
 // DOM Inspector Helper Functions
+function findElementsByTextInfo(searchText) {
+  const elements = findElementsByText(searchText);
+  return elements.map(el => ({
+    tagName: el.tagName,
+    id: el.id || null,
+    classes: el.className || null,
+    textContent: el.textContent.substring(0, 100),
+    selector: getUniqueSelector(el)
+  }));
+}
 function findElementsByText(searchText, caseSensitive = false, rootElement = document.body) {
   const results = [];
   const searchTextLower = caseSensitive ? searchText : searchText.toLowerCase();
