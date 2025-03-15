@@ -826,21 +826,68 @@ async function executeJS(code) {
   }
 }
 
-  // API endpoint to execute JavaScript
+// Endpoint for immediate execution
 app.post('/execute', async (req, res) => {
-  const { code } = req.body;
-  if (!code) {
-    return res.status(400).json({ error: 'No code provided' });
-  }
-  
   try {
-    const result = await executeJS(code);
-    if (result && result.error) {
-      return res.status(400).json(result);
+    const { code } = req.body;
+    if (!code) {
+      return res.status(400).json({ error: 'No code provided' });
     }
+
+    const result = await executeJS(code);
     res.json({ result });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+  } catch (error) {
+    console.error('Error executing code:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Endpoint for streaming execution
+app.post('/execute/stream', async (req, res) => {
+  try {
+    const { code } = req.body;
+    if (!code) {
+      return res.status(400).json({ error: 'No code provided' });
+    }
+
+    // Set headers for SSE
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    // Create a unique message handler for this request
+    const messageHandler = (event) => {
+      if (event.method === 'Runtime.consoleAPICalled') {
+        const msg = event.params.args.map(arg => arg.value || arg.description).join(' ');
+        res.write(`data: ${JSON.stringify({ type: 'console', message: msg })}\n\n`);
+      } else if (event.method === 'Runtime.executionContextDestroyed') {
+        res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+        res.end();
+      }
+    };
+
+    // Add the message handler
+    if (activeClient) {
+      activeClient.on('Runtime.consoleAPICalled', messageHandler);
+      activeClient.on('Runtime.executionContextDestroyed', messageHandler);
+    }
+
+    // Execute the code
+    const result = await executeJS(code);
+    
+    // Send the final result
+    res.write(`data: ${JSON.stringify({ type: 'result', data: result })}\n\n`);
+    res.end();
+
+    // Clean up the message handler
+    if (activeClient) {
+      activeClient.removeListener('Runtime.consoleAPICalled', messageHandler);
+      activeClient.removeListener('Runtime.executionContextDestroyed', messageHandler);
+    }
+  } catch (error) {
+    console.error('Error executing code:', error);
+    res.write(`data: ${JSON.stringify({ type: 'error', message: error.message })}\n\n`);
+    res.end();
   }
 });
 
